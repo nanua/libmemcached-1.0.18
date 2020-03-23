@@ -12,6 +12,8 @@
 #include "mem_config.h"
 
 #include <inttypes.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include "ms_stats.h"
 
 #define array_size(x)    (sizeof(x) / sizeof((x)[0]))
@@ -210,7 +212,7 @@ void ms_dump_stats(ms_stat_t *stat)
 void ms_dump_format_stats(ms_stat_t *stat,
                           int run_time,
                           int freq,
-                          int obj_size)
+                          int obj_size, int fd)
 {
   uint64_t events= 0;
   double global_average= 0;
@@ -292,6 +294,37 @@ void ms_dump_format_stats(ms_stat_t *stat,
     (long long)global_average,
     global_std,
     global_log);
+
+  if (fd != -1) {
+      struct flock fl;
+      memset(&fl, 0, sizeof(fl));
+      fl.l_type = F_WRLCK;
+      fl.l_whence = SEEK_SET;
+      fl.l_start = 0;
+      fl.l_len = 0;
+      fl.l_pid = 0;
+      if (fcntl(fd, F_SETLKW, &fl) < 0) {
+          fprintf(stdout, "cannot grab exclusive lock on performance file\n");
+          exit(1);
+      }
+      char buffer[256];
+      int cnt = sprintf(buffer, "%ld ", period_tps);
+      lseek(fd, SEEK_SET, 0);
+      if (write(fd, buffer, cnt) != cnt) {
+          fprintf(stdout, "cannot write ops per sec to performance file\n");
+          exit(1);
+      }
+      memset(&fl, 0, sizeof(fl));
+      fl.l_type = F_UNLCK;
+      fl.l_whence = SEEK_SET;
+      fl.l_start = 0;
+      fl.l_len = 0;
+      fl.l_pid = 0;
+      if (fcntl(fd, F_SETLK, &fl) < 0) {
+          fprintf(stdout, "cannot release exclusive lock on performance file\n");
+          exit(1);
+      }
+  }
 
   stat->pre_events= events;
   stat->pre_squares= (uint64_t)stat->squares;

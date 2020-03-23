@@ -18,6 +18,8 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <stdio.h>
 
 #if defined(HAVE_SYS_TIME_H)
 # include <sys/time.h>
@@ -110,7 +112,7 @@ static void ms_options_parse(int argc, char *argv[]);
 static int ms_check_para(void);
 static void ms_statistic_init(void);
 static void ms_stats_init(void);
-static void ms_print_statistics(int in_time);
+static void ms_print_statistics(int in_time, int fd);
 static void ms_print_memslap_stats(struct timeval *start_time,
                                    struct timeval *end_time);
 static void ms_monitor_slap_mode(void);
@@ -694,17 +696,17 @@ static void ms_stats_init()
 
 
 /* use to output the statistic */
-static void ms_print_statistics(int in_time)
+static void ms_print_statistics(int in_time, int fd)
 {
   int obj_size= (int)(ms_setting.avg_key_size + ms_setting.avg_val_size);
 
-  printf("\033[1;1H\033[2J\n");
+  // printf("\033[1;1H\033[2J\n");
   ms_dump_format_stats(&ms_statistic.get_stat, in_time,
-                       ms_setting.stat_freq, obj_size);
+                       ms_setting.stat_freq, obj_size, -1);
   ms_dump_format_stats(&ms_statistic.set_stat, in_time,
-                       ms_setting.stat_freq, obj_size);
+                       ms_setting.stat_freq, obj_size, -1);
   ms_dump_format_stats(&ms_statistic.total_stat, in_time,
-                       ms_setting.stat_freq, obj_size);
+                       ms_setting.stat_freq, obj_size, fd);
 } /* ms_print_statistics */
 
 
@@ -833,6 +835,12 @@ static void ms_monitor_slap_mode()
   }
   ms_global.finish_warmup= true;
 
+  int perf_fd = open("/tmp/memcached", O_RDWR | O_CREAT, 00777);
+  if (perf_fd < 0) {
+      fprintf(stdout, "cannot open performance file\n");
+      exit(1);
+  }
+
   /* running in "run time" mode, user specify run time */
   if (ms_setting.run_time > 0)
   {
@@ -843,11 +851,12 @@ static void ms_monitor_slap_mode()
       sleep(1);
       second++;
 
+
       if ((ms_setting.stat_freq > 0) && (second % ms_setting.stat_freq == 0)
           && (ms_stats.active_conns >= ms_setting.nconns)
           && (ms_stats.active_conns <= INT_MAX))
       {
-        ms_print_statistics(second);
+        ms_print_statistics(second, perf_fd);
       }
 
       if (ms_setting.run_time <= second)
@@ -870,15 +879,32 @@ static void ms_monitor_slap_mode()
     /* running in "execute number" mode, user specify execute number */
     gettimeofday(&start_time, NULL);
 
+    int second = 0;
+    while (true) {
+        pthread_mutex_lock(&ms_global.run_lock.lock);
+        if (ms_global.run_lock.count >= ms_setting.nconns) {
+            pthread_mutex_unlock(&ms_global.run_lock.lock);
+            break;
+        }
+        pthread_mutex_unlock(&ms_global.run_lock.lock);
+
+        second++;
+        ms_print_statistics(second, perf_fd);
+
+        sleep(1);
+    }
+
     /*
      * We loop until we know that all connects have cleaned up.
      */
+    /*
     pthread_mutex_lock(&ms_global.run_lock.lock);
     while (ms_global.run_lock.count < ms_setting.nconns)
     {
       pthread_cond_wait(&ms_global.run_lock.cond, &ms_global.run_lock.lock);
     }
     pthread_mutex_unlock(&ms_global.run_lock.lock);
+    */
 
     gettimeofday(&end_time, NULL);
   }

@@ -59,7 +59,7 @@ void ms_dump_stats(ms_stat_t *stat);
 void ms_dump_format_stats(ms_stat_t *stat,
                           int run_time,
                           int freq,
-                          int obj_size);
+                          int obj_size, int fd);
 
 
 #ifdef __cplusplus
